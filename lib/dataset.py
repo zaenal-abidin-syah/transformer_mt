@@ -80,7 +80,6 @@ class BilingualDataset(Dataset):
             "src": encoder_input,
             "tgt": decoder_input,
             "label": label,
-            # "tgt_mask": nn.Transformer.generate_square_subsequent_mask(sz=self.seq_len),
             "src_pad_mask": (encoder_input != self.pad_token),
             "tgt_pad_mask": (decoder_input != self.pad_token)
         }

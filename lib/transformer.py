@@ -1,24 +1,20 @@
 import torch
 from torch import nn
+from torch.nn import TransformerEncoder, TransformerEncoderLayer, TransformerDecoder, TransformerDecoderLayer
 import torch.nn.functional as F
 import math
 
 class Transformer(nn.Module):
-  def __init__(self, src_vocab, tgt_vocab, d_model=512, nhead=8, N=6, d_ff=2048, dropout=.0):
+  def __init__(self, src_vocab, tgt_vocab, d_model=512, nhead=8, N=6, d_ff=2048, dropout=.0, batch_first=True):
     super(Transformer, self).__init__()
     self.d_model = d_model
     self.input_embedding = nn.Embedding(src_vocab, d_model)
     self.output_embedding = nn.Embedding(tgt_vocab, d_model)
-    self.pos_encod = PositionalEncoding(d_model=d_model, dropout=dropout, batch_first=True)
-    self.transformer = nn.Transformer(
-      d_model=d_model, 
-      nhead=nhead, 
-      num_encoder_layers=N, 
-      num_decoder_layers=N, 
-      dim_feedforward=d_ff,
-      dropout=dropout,
-      batch_first=True
-      )
+    self.pos_encod = PositionalEncoding(d_model=d_model, dropout=dropout, batch_first=batch_first)
+    self.encoder_layer = TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=d_ff, dropout=dropout, batch_first=batch_first)
+    self.decoder_layer = TransformerDecoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=d_ff, dropout=dropout, batch_first=batch_first)
+    self.encoder = TransformerEncoder(encoder_layer=self.encoder_layer, num_layers=N)
+    self.decoder = TransformerDecoder(decoder_layer=self.decoder_layer, num_layers=N)
     self.projection = nn.Linear(d_model, tgt_vocab)
     self.init_weights()
   def init_weights(self):
@@ -31,23 +27,24 @@ class Transformer(nn.Module):
     nn.init.uniform_(self.projection.weight, -initrange, initrange)
 
     # Optional: inisialisasi seluruh layer transformer
-    for p in self.transformer.parameters():
-        if p.dim() > 1:
-            nn.init.xavier_uniform_(p)
-  def forward(self, src, tgt, src_mask=None, tgt_mask=None, src_key_padding_mask=None, tgt_key_padding_mask=None):
+    for module in (self.encoder, self.decoder):
+      for p in module.parameters():
+          if p.dim() > 1:
+              nn.init.xavier_uniform_(p)
+  def encode(self, src, src_mask, src_key_padding_mask=None):
+    src_encoding = self.pos_encod(self.input_embedding(src) * math.sqrt(self.d_model))
+    memory = self.encoder(src=src_encoding, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
+    return memory
+  def decode(self, tgt, memory, tgt_mask=None, tgt_key_padding_mask=None, memory_key_padding_mask=None, tgt_is_causal=False):
+    tgt_encoding = self.pos_encod(self.output_embedding(tgt) * math.sqrt(self.d_model))
+    x = self.decoder(tgt=tgt_encoding, memory=memory, tgt_mask=tgt_mask, tgt_key_padding_mask=tgt_key_padding_mask, memory_key_padding_mask=memory_key_padding_mask, tgt_is_causal=tgt_is_causal)
+    return x
+  def forward(self, src, tgt, src_mask=None, tgt_mask=None, src_key_padding_mask=None, tgt_key_padding_mask=None, tgt_is_causal=False):
     src_encoding = self.pos_encod(self.input_embedding(src) * math.sqrt(self.d_model))
     tgt_encoding = self.pos_encod(self.output_embedding(tgt) * math.sqrt(self.d_model))
-    x = self.transformer(
-        src=src_encoding,
-        tgt=tgt_encoding,
-        src_mask=src_mask,
-        tgt_mask=tgt_mask,
-        src_key_padding_mask=src_key_padding_mask,
-        tgt_key_padding_mask=tgt_key_padding_mask
-    )
-    # self.output_embedding(tgt)
+    x = self.encoder(src=src_encoding, mask=src_mask, src_key_padding_mask=src_key_padding_mask)
+    x = self.decoder(tgt=tgt_encoding, memory=x, tgt_mask=tgt_mask, tgt_key_padding_mask=tgt_key_padding_mask, memory_key_padding_mask=src_key_padding_mask, tgt_is_causal=tgt_is_causal)
     return self.projection(x)
-
 
 
 class PositionalEncoding(nn.Module):
